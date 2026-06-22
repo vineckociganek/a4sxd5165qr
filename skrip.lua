@@ -1,25 +1,14 @@
 _G.Status = "Ready!"
 wait(2)
 
-local getinfo = getinfo or debug.getinfo
-local DEBUG = false
-local Hooked = {}
-
-local Detected, Kill
+-- Anti-Cheat Bypass
 setthreadidentity(2)
-
 for i, v in pairs(getgc(true)) do
     if typeof(v) == "table" then
         local DetectFunc = rawget(v, "Detected")
         local KillFunc = rawget(v, "Kill")
-        if typeof(DetectFunc) == "function" and not Detected then
-            Detected = DetectFunc
-            hookfunction(DetectFunc, function() return true end)
-        end
-        if typeof(KillFunc) == "function" and not Kill then
-            Kill = KillFunc
-            hookfunction(KillFunc, function() return nil end)
-        end
+        if typeof(DetectFunc) == "function" then hookfunction(DetectFunc, function() return true end) end
+        if typeof(KillFunc) == "function" then hookfunction(KillFunc, function() return nil end) end
     end
 end
 setthreadidentity(7)
@@ -30,14 +19,13 @@ local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/
 local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/addons/SaveManager.lua"))()
 
 local Window = Library:CreateWindow({
-    Title = "TownV1.3",
+    Title = "VaporWare - discord.gg/AAnmrCTRk6",
     Center = true,
     AutoShow = true,
 })
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local CoreGui = game:GetService("CoreGui")
@@ -48,24 +36,49 @@ local CurrentCamera = Workspace.CurrentCamera
 
 getgenv().ForceMouseUnlock = true
 
+-- ====================== VARIABLES ======================
 local SilentAim = {
-    Enabled = false,
-    TargetPart = "Head",
-    HealthCheck = true,
-    PassiveCheck = false,
-    WallCheck = false,
-    Kent = false,
+    Enabled = false, TargetPart = "Head", HealthCheck = true,
+    PassiveCheck = false, WallCheck = false,
     FOV = { Radius = 60, Visible = false, Color = Color3.fromRGB(171, 0, 255) },
-    Tracer = { Enabled = false, Color = Color3.fromRGB(171, 0, 255), Thickness = 1 },
-    FlashPartNames = {"Flash", "FlashPart", "FirePoint", "Muzzle"},
+    Tracer = { Enabled = false, Color = Color3.fromRGB(171, 0, 255), Thickness = 1 }
 }
 
 local SilentAimFOVCircle, TracerLine
 local IsTargeting = false
 local originalIndex
-local lastWallCheck = 0
 local wallCheckCache = {}
+local lastWallCheck = 0
 
+local objectMoverEnabled = false
+local movedObjectsFolder = nil
+local thirdPersonEnabled = false
+local thirdPersonWasEnabled = false
+
+local autoShootEnabled = false
+local autoShootConnection = nil
+
+local isInfAmmoEnabled = false
+local infAmmoConnections = {}
+
+local fullBrightEnabled = false
+local brightConnection = nil
+
+-- ESP
+local playerEspEnabled = true
+local showDistance = true
+local playerEspCache = {}
+
+-- Sky Options
+local skyOptions = {
+    ["Default"] = {},
+    ["Space"] = {SkyboxBk = "rbxassetid://159454286", SkyboxDn = "rbxassetid://159454299", SkyboxFt = "rbxassetid://159454293", SkyboxLf = "rbxassetid://159454286", SkyboxRt = "rbxassetid://159454300", SkyboxUp = "rbxassetid://159454288"},
+    ["Night"] = {SkyboxBk = "rbxassetid://12064107", SkyboxDn = "rbxassetid://12064107", SkyboxFt = "rbxassetid://12064107", SkyboxLf = "rbxassetid://12064107", SkyboxRt = "rbxassetid://12064107", SkyboxUp = "rbxassetid://12064107"},
+    ["Pink Clouds"] = {SkyboxBk = "rbxassetid://271042596", SkyboxDn = "rbxassetid://271042596", SkyboxFt = "rbxassetid://271042596", SkyboxLf = "rbxassetid://271042596", SkyboxRt = "rbxassetid://271042596", SkyboxUp = "rbxassetid://271042596"},
+    ["Cyberpunk"] = {SkyboxBk = "rbxassetid://600830446", SkyboxDn = "rbxassetid://600830446", SkyboxFt = "rbxassetid://600830446", SkyboxLf = "rbxassetid://600830446", SkyboxRt = "rbxassetid://600830446", SkyboxUp = "rbxassetid://600830446"},
+}
+
+-- ====================== CORE FUNCTIONS ======================
 local function InitSilentAimDrawings()
     SilentAimFOVCircle = SilentAimFOVCircle or Drawing.new("Circle")
     TracerLine = TracerLine or Drawing.new("Line")
@@ -79,27 +92,13 @@ local function InitSilentAimDrawings()
 end
 
 local function getFlashPart()
-    if not player.Character then return nil end
-    local tool = player.Character:FindFirstChildOfClass("Tool")
+    local tool = player.Character and player.Character:FindFirstChildOfClass("Tool")
     if not tool then return nil end
-    for _, name in ipairs(SilentAim.FlashPartNames) do
+    for _, name in ipairs({"Flash","FlashPart","FirePoint","Muzzle"}) do
         local flash = tool:FindFirstChild(name, true)
         if flash and flash:IsA("BasePart") then return flash end
     end
-    local handle = tool:FindFirstChild("Handle")
-    if handle and handle:IsA("BasePart") then return handle end
-    return nil
-end
-
-local function hasForceField(char) return char and char:FindFirstChildOfClass("ForceField") end
-local function hasGunScript()
-    local tool = player.Character and player.Character:FindFirstChildOfClass("Tool")
-    return tool and tool:FindFirstChild("GunScript")
-end
-
-local function getCursorCenter()
-    local vp = CurrentCamera.ViewportSize
-    return Vector2.new(vp.X/2, vp.Y/2)
+    return tool:FindFirstChild("Handle")
 end
 
 local function WallCheck(origin, destination)
@@ -112,7 +111,7 @@ local function WallCheck(origin, destination)
     params.FilterDescendantsInstances = {player.Character, CurrentCamera}
     params.IgnoreWater = true
     local res = workspace:Raycast(origin, dir.Unit * dir.Magnitude, params)
-    local success = not res or res.Instance.CanCollide == false or (res.Instance.Transparency or 0) > 0.9
+    local success = not res or not res.Instance.CanCollide or (res.Instance.Transparency or 0) > 0.9
     wallCheckCache[cacheKey] = success
     lastWallCheck = tick()
     return success
@@ -123,28 +122,26 @@ local function FindBestTarget()
     local flash = getFlashPart()
     local origin = flash and flash.Position or CurrentCamera.CFrame.Position
     local best, closest = nil, math.huge
-    local center = getCursorCenter()
+    local center = Vector2.new(CurrentCamera.ViewportSize.X/2, CurrentCamera.ViewportSize.Y/2)
 
     for _, p in ipairs(Players:GetPlayers()) do
         if p == player then continue end
         local char = p.Character
         if not char then continue end
-        if SilentAim.PassiveCheck and hasForceField(char) then continue end
+        if SilentAim.PassiveCheck and char:FindFirstChildOfClass("ForceField") then continue end
         local hum = char:FindFirstChild("Humanoid")
         if not hum or hum.Health <= 0 or (SilentAim.HealthCheck and hum.Health <= 1) then continue end
 
         local tPart = char:FindFirstChild(SilentAim.TargetPart) or char:FindFirstChild("Head")
         if not tPart then continue end
+        if not WallCheck(origin, tPart.Position) then continue end
 
-        local predPos = tPart.Position
-        if not WallCheck(origin, predPos) then continue end
-
-        local screen, onScreen = CurrentCamera:WorldToViewportPoint(predPos)
+        local screen, onScreen = CurrentCamera:WorldToViewportPoint(tPart.Position)
         if not onScreen then continue end
         local dist = (Vector2.new(screen.X, screen.Y) - center).Magnitude
         if dist < SilentAim.FOV.Radius and dist < closest then
             closest = dist
-            best = {PredictedPosition = predPos}
+            best = {PredictedPosition = tPart.Position}
         end
     end
     IsTargeting = best ~= nil
@@ -152,7 +149,7 @@ local function FindBestTarget()
 end
 
 local function UpdateSilentAimVisuals()
-    local center = getCursorCenter()
+    local center = Vector2.new(CurrentCamera.ViewportSize.X/2, CurrentCamera.ViewportSize.Y/2)
     if SilentAimFOVCircle then
         SilentAimFOVCircle.Position = center
         SilentAimFOVCircle.Visible = SilentAim.Enabled and SilentAim.FOV.Visible
@@ -173,7 +170,8 @@ if not originalIndex then
     originalIndex = hookmetamethod(game, "__index", function(self, key)
         if not SilentAim.Enabled then return originalIndex(self, key) end
         if self:IsA("Mouse") and key == "Hit" then
-            if not hasGunScript() then return originalIndex(self, key) end
+            local tool = player.Character and player.Character:FindFirstChildOfClass("Tool")
+            if not tool or not tool:FindFirstChild("GunScript") then return originalIndex(self, key) end
             local tgt = FindBestTarget()
             if tgt then
                 IsTargeting = true
@@ -185,144 +183,128 @@ if not originalIndex then
     end)
 end
 
-local flyEnabled = false
-local desyncEnabled = false
-local flySpeed = 50
-local flyConnection = nil
-local bodyVelocity = nil
-local desyncOffset = 5
-
-local function startFly()
-    if flyEnabled then return end
-    flyEnabled = true
-    local char = player.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-
-    bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-    bodyVelocity.Velocity = Vector3.new(0,0,0)
-    bodyVelocity.Parent = char.HumanoidRootPart
-
-    flyConnection = RunService.Heartbeat:Connect(function()
-        if not flyEnabled then return end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-
-        local moveDir = Vector3.new()
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - Camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + Camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0,1,0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir = moveDir - Vector3.new(0,1,0) end
-
-        if moveDir.Magnitude > 0 then
-            moveDir = moveDir.Unit * flySpeed
-        end
-
-        if desyncEnabled then
-            local desyncVec = Vector3.new(math.random(-desyncOffset, desyncOffset), 0, math.random(-desyncOffset, desyncOffset))
-            bodyVelocity.Velocity = moveDir + desyncVec
-        else
-            bodyVelocity.Velocity = moveDir
-        end
-    end)
-end
-
-local function stopFly()
-    flyEnabled = false
-    desyncEnabled = false
-    if flyConnection then flyConnection:Disconnect() end
-    if bodyVelocity then bodyVelocity:Destroy() end
-end
-
-local autoShootEnabled = false
-local autoShootConnection = nil
-
+-- Auto Shoot
 local function startAutoShoot()
     if autoShootConnection then return end
     autoShootConnection = RunService.Heartbeat:Connect(function()
         if not autoShootEnabled then return end
         local tool = player.Character and player.Character:FindFirstChildOfClass("Tool")
-        if tool and tool:FindFirstChild("GunScript") then
-            local target = FindBestTarget()
-            if target then mouse1click() end
+        if tool and tool:FindFirstChild("GunScript") and FindBestTarget() then
+            mouse1click()
         end
     end)
 end
 
 local function stopAutoShoot()
-    if autoShootConnection then autoShootConnection:Disconnect() end
-    autoShootConnection = nil
+    if autoShootConnection then autoShootConnection:Disconnect() autoShootConnection = nil end
 end
 
-local isEnabled = false
-local connections = {}
-
-local function cleanup()
-    for _, c in ipairs(connections) do if c then c:Disconnect() end end
-    connections = {}
+-- Infinite Ammo
+local function startInfiniteAmmo()
+    isInfAmmoEnabled = true
+    local function process(char)
+        for _, tool in ipairs(char:GetDescendants()) do
+            if tool:IsA("Tool") then
+                local pf = Workspace:FindFirstChild(player.Name)
+                local weapon = pf and pf:FindFirstChild(tool.Name, true)
+                if weapon and weapon:FindFirstChild("GunScript") and weapon.GunScript:FindFirstChild("ClientAmmo") then
+                    local ammo = weapon.GunScript.ClientAmmo
+                    local orig = ammo.Value
+                    local conn = ammo.Changed:Connect(function() ammo.Value = orig end)
+                    table.insert(infAmmoConnections, conn)
+                end
+            end
+        end
+    end
+    if player.Character then process(player.Character) end
+    player.CharacterAdded:Connect(process)
 end
 
-local function FindWeaponInWorkspace(tool)
-    if not tool then return nil end
-    local pf = Workspace:FindFirstChild(player.Name)
-    return pf and pf:FindFirstChild(tool.Name, true)
+local function stopInfiniteAmmo()
+    isInfAmmoEnabled = false
+    for _, c in ipairs(infAmmoConnections) do c:Disconnect() end
+    infAmmoConnections = {}
 end
 
-local function IsWeaponReady(weapon)
-    return weapon and weapon:FindFirstChild("GunScript") and weapon.GunScript:FindFirstChild("ClientAmmo")
+-- WallBang
+local function startWallBang()
+    if objectMoverEnabled then return end
+    objectMoverEnabled = true
+    movedObjectsFolder = Instance.new("Folder")
+    movedObjectsFolder.Name = "WallBang"
+    movedObjectsFolder.Parent = Camera
+
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if (obj:IsA("BasePart") or obj:IsA("Model")) and obj.Name ~= "Baseplate" and not obj:FindFirstChildOfClass("Humanoid") and obj.Parent ~= player.Character then
+            pcall(function() obj.Parent = movedObjectsFolder end)
+        end
+    end
 end
 
-local function freezeAmmo(weapon)
-    if not IsWeaponReady(weapon) then return end
-    local ammo = weapon.GunScript.ClientAmmo
-    local orig = ammo.Value
-    local conn = ammo.Changed:Connect(function()
-        if ammo.Value ~= orig then ammo.Value = orig end
-    end)
-    table.insert(connections, conn)
+local function stopWallBang()
+    objectMoverEnabled = false
+    if movedObjectsFolder then movedObjectsFolder:Destroy() movedObjectsFolder = nil end
 end
 
-local function forceReload(character)
-    if not character then return end
-    for _, tool in ipairs(character:GetDescendants()) do
+-- Third Person
+local function toggleThirdPerson(v)
+    thirdPersonEnabled = v
+    thirdPersonWasEnabled = v
+    local camClient = player.PlayerGui:FindFirstChild("CameraClient")
+    if camClient then camClient.Enabled = not v end
+end
+
+player.CharacterRemoving:Connect(function()
+    if thirdPersonEnabled then
+        thirdPersonEnabled = false
+        local camClient = player.PlayerGui:FindFirstChild("CameraClient")
+        if camClient then camClient.Enabled = true end
+        task.wait(1)
+        if thirdPersonWasEnabled and player.Character then
+            toggleThirdPerson(true)
+        end
+    end
+end)
+
+-- Instant Equip
+local function instantEquip()
+    for _, tool in ipairs(player.Backpack:GetChildren()) do
         if tool:IsA("Tool") then
-            local weapon = FindWeaponInWorkspace(tool)
-            if weapon and weapon:FindFirstChild("ReloadEvent") then
-                local re = weapon.ReloadEvent
-                re:FireServer({[11] = "startReload"})
-                re:FireServer({[14] = 0, [11] = "magMath"})
-                re:FireServer({[14] = 3, [11] = "insertMag"})
-                re:FireServer({[14] = 3, [11] = "stopReload"})
+            local stats = tool:FindFirstChild("Stats") or (tool:FindFirstChild("AttachmentFolder") and tool.AttachmentFolder:FindFirstChild("Tool") and tool.AttachmentFolder.Tool:FindFirstChild("Stats"))
+            if stats and stats:FindFirstChild("EquipSpeed") then
+                stats.EquipSpeed.Value = 0.00001
             end
         end
     end
 end
 
-local function processWeapons(char)
-    if not char then return end
-    for _, tool in ipairs(char:GetDescendants()) do
-        if tool:IsA("Tool") then
-            local w = FindWeaponInWorkspace(tool)
-            if IsWeaponReady(w) then freezeAmmo(w) end
-        end
-    end
-    forceReload(char)
-end
-
-local function mainLoop()
-    while isEnabled do
-        local char = player.Character or player.CharacterAdded:Wait()
-        processWeapons(char)
-        task.wait(0.1)
+-- Full Bright
+local function toggleFullBright(v)
+    fullBrightEnabled = v
+    if v then
+        brightConnection = RunService.RenderStepped:Connect(function()
+            Lighting.Brightness = 2
+            Lighting.ClockTime = 14
+            Lighting.FogEnd = 100000
+            Lighting.GlobalShadows = false
+            Lighting.OutdoorAmbient = Color3.fromRGB(128,128,128)
+        end)
+    else
+        if brightConnection then brightConnection:Disconnect() end
     end
 end
 
-local playerEspEnabled = false
-local Distance = false
-local playerEspCache = {}
+-- Custom Sky
+local function setCustomSky(skyType)
+    local sky = Lighting:FindFirstChildOfClass("Sky") or Instance.new("Sky")
+    sky.Parent = Lighting
+    local data = skyOptions[skyType] or {}
+    for prop, val in pairs(data) do
+        sky[prop] = val
+    end
+end
 
+-- ====================== ESP SYSTEM (FIXED) ======================
 local function getPlayerPosition(char)
     local hrp = char:FindFirstChild("HumanoidRootPart")
     return hrp and hrp.Position or (char:FindFirstChild("Head") and char.Head.Position)
@@ -342,6 +324,7 @@ local function createHighlight(adornee, color)
     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     hl.Adornee = adornee
     hl.Enabled = true
+    hl.Parent = adornee
     return hl
 end
 
@@ -387,14 +370,14 @@ end
 
 local function refreshPlayerESP()
     for p in pairs(playerEspCache) do cleanupPlayerESP(p) end
-    if playerEspEnabled then
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= player then setupPlayerESP(p) end
-        end
+    if not playerEspEnabled then return end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then setupPlayerESP(p) end
     end
 end
 
 local function updateESPLabels()
+    if not playerEspEnabled then return end
     local camPos = Camera.CFrame.Position
     for p, data in pairs(playerEspCache) do
         if not p.Character or not p.Character.Parent then
@@ -404,7 +387,7 @@ local function updateESPLabels()
             if pos then
                 local dist = (pos - camPos).Magnitude * 0.36
                 local hp = getPlayerHealth(data.character)
-                if Distance then
+                if showDistance then
                     data.label.Text = string.format("%s\nHP: %d | %.0fm", p.Name, hp, dist)
                 else
                     data.label.Text = string.format("%s\nHP: %d", p.Name, hp)
@@ -414,114 +397,90 @@ local function updateESPLabels()
     end
 end
 
-local spinbotEnabled = false
-local spinConnection = nil
-local spinSpeed = 50
+-- ====================== TABS ======================
+local Tabs = {
+    Combat = Window:AddTab("Combat"),
+    Modifications = Window:AddTab("Modifications"),
+    Exploits = Window:AddTab("Exploits"),
+    Visuals = Window:AddTab("Visuals"),
+    Menu = Window:AddTab("Menu")
+}
 
-local function startSpinbot()
-    if spinConnection then return end
-    spinConnection = RunService.Heartbeat:Connect(function()
-        if not spinbotEnabled or not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
-        local root = player.Character.HumanoidRootPart
-        root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(spinSpeed), 0)
+-- COMBAT
+local CombatLeft = Tabs.Combat:AddLeftGroupbox("Silent Aim")
+CombatLeft:AddToggle("SilentAimToggle", {Text = "Silent Aim", Default = false, Callback = function(v) SilentAim.Enabled = v; if v then InitSilentAimDrawings() end end})
+CombatLeft:AddToggle("SilentFOVToggle", {Text = "Show FOV", Default = false, Callback = function(v) SilentAim.FOV.Visible = v end})
+CombatLeft:AddSlider("SilentFOVSize", {Text = "FOV Size", Default = 60, Min = 10, Max = 800, Rounding = 0, Callback = function(v) SilentAim.FOV.Radius = v end})
+CombatLeft:AddToggle("SilentTracerToggle", {Text = "Show Tracer", Default = false, Callback = function(v) SilentAim.Tracer.Enabled = v end})
+CombatLeft:AddToggle("SilentWallCheckToggle", {Text = "Wall Check", Default = false, Callback = function(v) SilentAim.WallCheck = v end})
+CombatLeft:AddDropdown("SilentTargetPart", {Text = "Target Part", Default = "Head", Values = {"Head", "Torso"}, Callback = function(v) SilentAim.TargetPart = v end})
+CombatLeft:AddToggle("AutoShootToggle", {Text = "Auto Shoot", Default = false, Callback = function(v) autoShootEnabled = v; if v then startAutoShoot() else stopAutoShoot() end end})
+
+-- MODIFICATIONS
+local ModsRight = Tabs.Modifications:AddRightGroupbox("Movement & Others")
+ModsRight:AddToggle("WallBangToggle", {Text = "WallBang", Default = false, Callback = function(v) if v then startWallBang() else stopWallBang() end end})
+ModsRight:AddToggle("InfiniteAmmoToggle", {Text = "Infinite Ammo", Default = false, Callback = function(v) if v then startInfiniteAmmo() else stopInfiniteAmmo() end end})
+ModsRight:AddToggle("InstantEquipToggle", {Text = "Instant Equip", Default = false, Callback = function(v) if v then spawn(function() while v do instantEquip() task.wait(0.5) end end) end end})
+ModsRight:AddToggle("ThirdPersonToggle", {Text = "Third Person", Default = false, Callback = toggleThirdPerson})
+
+-- EXPLOITS
+local ExpLeft = Tabs.Exploits:AddLeftGroupbox("Healing")
+ExpLeft:AddToggle("InstaMedkit", {Text = "Instant Medkit (Self)", Default = false, Callback = function(v)
+    spawn(function()
+        while v do
+            local medkit = player.Character and player.Character:FindFirstChild("Medkit")
+            if medkit and medkit:FindFirstChild("ActionMain") then
+                medkit.ActionMain:FireServer("heal", player.Character)
+            end
+            task.wait(0.05)
+        end
     end)
-end
-
-local function stopSpinbot()
-    spinbotEnabled = false
-    if spinConnection then spinConnection:Disconnect() spinConnection = nil end
-end
-
-local thirdPersonEnabled = false
-local fullBrightEnabled = false
-local brightConnection = nil
-
-local function toggleThirdPerson(v)
-    thirdPersonEnabled = v
-    local camClient = player.PlayerGui:FindFirstChild("CameraClient")
-    if camClient then camClient.Enabled = not v end
-end
-
-local function toggleFullBright(v)
-    fullBrightEnabled = v
-    if v then
-        brightConnection = RunService.RenderStepped:Connect(function()
-            Lighting.Brightness = 2
-            Lighting.ClockTime = 14
-            Lighting.FogEnd = 100000
-            Lighting.GlobalShadows = false
-            Lighting.OutdoorAmbient = Color3.fromRGB(128,128,128)
-        end)
-    else
-        if brightConnection then brightConnection:Disconnect() end
-    end
-end
-
-local objectMoverEnabled = false
-local movedObjectsFolder = nil
-
-local function startWallBang()
-    if objectMoverEnabled then return end
-    objectMoverEnabled = true
-    movedObjectsFolder = Instance.new("Folder")
-    movedObjectsFolder.Name = "MovedFromWorkspace"
-    movedObjectsFolder.Parent = Camera
-
-end
-
-local function stopWallBang()
-    objectMoverEnabled = false
-    if movedObjectsFolder then movedObjectsFolder:Destroy() end
-end
-
-local FirstTestTab = Window:AddTab("First Test")
-
-local Combat = FirstTestTab:AddLeftGroupbox("Combat")
-local Visuals = FirstTestTab:AddRightGroupbox("Visuals")
-local Movement = FirstTestTab:AddRightGroupbox("Movement")
-
--- Silent Aim
-Combat:AddToggle("SilentAimToggle", {Text = "Silent Aim", Default = false, Callback = function(v) SilentAim.Enabled = v; if v then InitSilentAimDrawings() end end})
-Combat:AddSlider("SilentFOVSize", {Text = "Silent Aim FOV", Default = 60, Min = 10, Max = 800, Rounding = 0, Callback = function(v) SilentAim.FOV.Radius = v end})
-Combat:AddToggle("SilentFOV", {Text = "Show FOV", Default = false, Callback = function(v) SilentAim.FOV.Visible = v end})
-Combat:AddToggle("SilentTracer", {Text = "Show Tracer", Default = false, Callback = function(v) SilentAim.Tracer.Enabled = v end})
-Combat:AddToggle("SilentWallCheck", {Text = "Wall Check", Default = false, Callback = function(v) SilentAim.WallCheck = v end})
-Combat:AddToggle("AutoShoot", {Text = "Auto Shoot", Default = false, Callback = function(v) autoShootEnabled = v; if v then startAutoShoot() else stopAutoShoot() end end})
-Combat:AddToggle("InfAmmoToggle", {Text = "Infinite Ammo", Default = false, Callback = function(v) isEnabled = v; if v then spawn(mainLoop) else cleanup() end end})
-Combat:AddButton({Text = "Enable WallBang", Func = startWallBang})
-
-Movement:AddToggle("SpinbotToggle", {Text = "Spinbot", Default = false, Callback = function(v) spinbotEnabled = v; if v then startSpinbot() else stopSpinbot() end end})
-Movement:AddSlider("SpinSpeed", {Text = "Spin Speed", Default = 50, Min = 10, Max = 200, Rounding = 0, Callback = function(v) spinSpeed = v end})
-
-Movement:AddToggle("FlyToggle", {Text = "Fly Hack", Default = false, Callback = function(v)
-    if v then startFly() else stopFly() end
 end})
 
-Movement:AddToggle("DesyncToggle", {Text = "Desync (with Fly)", Default = false, Callback = function(v)
-    desyncEnabled = v
-end})
+-- VISUALS
+local VisLeft = Tabs.Visuals:AddLeftGroupbox("ESP")
+VisLeft:AddToggle("ESPEnable", {Text = "Enable ESP", Default = false, Callback = function(v) playerEspEnabled = v; refreshPlayerESP() end})
+VisLeft:AddToggle("ESPDistanceToggle", {Text = "Show Distance", Default = false, Callback = function(v) showDistance = v end})
 
-Movement:AddSlider("FlySpeed", {Text = "Fly Speed", Default = 50, Min = 10, Max = 200, Rounding = 0, Callback = function(v) flySpeed = v end})
+local VisRight = Tabs.Visuals:AddRightGroupbox("World")
+VisRight:AddToggle("FullBrightToggle", {Text = "Full Bright", Default = false, Callback = toggleFullBright})
+VisRight:AddDropdown("CustomSkyDropdown", {Text = "Custom Sky", Default = "Default", Values = {"Default","Vaporwave","Space","Night","Sunset","Pink Clouds","Cyberpunk"}, Callback = setCustomSky})
 
-Movement:AddToggle("ThirdPerson", {Text = "Third Person", Default = false, Callback = toggleThirdPerson})
-Movement:AddToggle("FullBright", {Text = "Full Bright", Default = false, Callback = toggleFullBright})
+-- MENU
+local MenuBox = Tabs.Menu:AddLeftGroupbox("GUI Settings")
+ThemeManager:SetLibrary(Library)
+ThemeManager:ApplyToTab(Tabs.Menu)
+SaveManager:SetLibrary(Library)
+SaveManager:BuildConfigSection(Tabs.Menu)
+SaveManager:LoadAutoloadConfig()
 
-Visuals:AddToggle("ESPToggle", {Text = "Enable ESP", Default = false, Callback = function(v) playerEspEnabled = v; refreshPlayerESP() end})
-Visuals:AddToggle("ESPDistance", {Text = "Show Distance", Default = false, Callback = function(v) Distance = v end})
-
+-- ====================== CONNECTIONS (FIXED) ======================
 RunService.Heartbeat:Connect(UpdateSilentAimVisuals)
 RunService.RenderStepped:Connect(updateESPLabels)
 
+-- Better Player Detection
 Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        task.wait(1)
+        if playerEspEnabled then setupPlayerESP(p) end
+    end)
     task.wait(1)
     if playerEspEnabled then setupPlayerESP(p) end
 end)
 
-player.CharacterAdded:Connect(function(char)
+-- Initial ESP Setup
+for _, p in ipairs(Players:GetPlayers()) do
+    if p ~= player then
+        if p.Character then setupPlayerESP(p) end
+        p.CharacterAdded:Connect(function() task.wait(1); if playerEspEnabled then setupPlayerESP(p) end end)
+    end
+end
+
+player.CharacterAdded:Connect(function()
     task.wait(1)
-    if isEnabled then processWeapons(char) end
+    refreshPlayerESP()
 end)
 
 task.wait(1)
 InitSilentAimDrawings()
-print("✅ anti-shit bypassed and well enjoy :)")
+print("VaporWare - Loaded!")
